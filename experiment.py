@@ -16,7 +16,6 @@ from rrl.models import RRL
 
 DATA_DIR = './dataset'
 
-device = torch.device('mps')
 
 def get_data_loader(dataset, world_size, rank, batch_size, k=0, pin_memory=False, save_best=True):
     data_path = os.path.join(DATA_DIR, dataset + '.data')
@@ -35,8 +34,8 @@ def get_data_loader(dataset, world_size, rank, batch_size, k=0, pin_memory=False
     X_test = X[test_index]
     y_test = y[test_index]
 
-    train_set = TensorDataset(torch.tensor(X_train.astype(np.float32)).to(device), torch.tensor(y_train.astype(np.float32)).to(device))
-    test_set = TensorDataset(torch.tensor(X_test.astype(np.float32)).to(device), torch.tensor(y_test.astype(np.float32)).to(device))
+    train_set = TensorDataset(torch.tensor(X_train.astype(np.float32)), torch.tensor(y_train.astype(np.float32)))
+    test_set = TensorDataset(torch.tensor(X_test.astype(np.float32)), torch.tensor(y_test.astype(np.float32)))
 
     train_len = int(len(train_set) * 0.95)
     train_sub, valid_set = random_split(train_set, [train_len, len(train_set) - train_len])
@@ -46,7 +45,8 @@ def get_data_loader(dataset, world_size, rank, batch_size, k=0, pin_memory=False
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_set, num_replicas=world_size, rank=rank)
 
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, sampler=train_sampler)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory,
+                              sampler=train_sampler)
     valid_loader = DataLoader(valid_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, pin_memory=pin_memory)
 
@@ -130,14 +130,17 @@ def load_model(path, device_id, log_file=None, distributed=True):
 def test_model(args):
     rrl = load_model(args.model, args.device_ids[0], log_file=args.test_res, distributed=False)
     dataset = args.data_set
-    db_enc, train_loader, _, test_loader = get_data_loader(dataset, 4, 0, args.batch_size, args.ith_kfold, save_best=False)
+    db_enc, train_loader, _, test_loader = get_data_loader(dataset, 4, 0, args.batch_size, args.ith_kfold,
+                                                           save_best=False)
     rrl.test(test_loader=test_loader, set_name='Test')
     if args.print_rule:
         with open(args.rrl_file, 'w') as rrl_file:
-            rule2weights = rrl.rule_print(db_enc.X_fname, db_enc.y_fname, train_loader, file=rrl_file, mean=db_enc.mean, std=db_enc.std)
+            rule2weights = rrl.rule_print(db_enc.X_fname, db_enc.y_fname, train_loader, file=rrl_file, mean=db_enc.mean,
+                                          std=db_enc.std)
     else:
-        rule2weights = rrl.rule_print(db_enc.X_fname, db_enc.y_fname, train_loader, mean=db_enc.mean, std=db_enc.std, display=False)
-    
+        rule2weights = rrl.rule_print(db_enc.X_fname, db_enc.y_fname, train_loader, mean=db_enc.mean, std=db_enc.std,
+                                      display=False)
+
     metric = 'Log(#Edges)'
     edge_cnt = 0
     connected_rid = defaultdict(lambda: set())
@@ -161,7 +164,6 @@ def test_model(args):
     logging.info('\n\t{} of RRL  Model: {}'.format(metric, np.log(edge_cnt)))
 
 
-
 def train_main(args):
     os.environ['MASTER_ADDR'] = args.master_address
     os.environ['MASTER_PORT'] = args.master_port
@@ -170,7 +172,8 @@ def train_main(args):
 
 if __name__ == '__main__':
     from args import rrl_args
-    for arg in vars(rrl_args):
-        print(arg, getattr(rrl_args, arg))
+
+    # for arg in vars(rrl_args):
+    #     print(arg, getattr(rrl_args, arg))
     train_main(rrl_args)
     test_model(rrl_args)
