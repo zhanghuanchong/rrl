@@ -16,6 +16,7 @@ from rrl.models import RRL
 
 DATA_DIR = './dataset'
 
+device = torch.device('mps')
 
 def get_data_loader(dataset, world_size, rank, batch_size, k=0, pin_memory=False, save_best=True):
     data_path = os.path.join(DATA_DIR, dataset + '.data')
@@ -34,8 +35,8 @@ def get_data_loader(dataset, world_size, rank, batch_size, k=0, pin_memory=False
     X_test = X[test_index]
     y_test = y[test_index]
 
-    train_set = TensorDataset(torch.tensor(X_train.astype(np.float32)), torch.tensor(y_train.astype(np.float32)))
-    test_set = TensorDataset(torch.tensor(X_test.astype(np.float32)), torch.tensor(y_test.astype(np.float32)))
+    train_set = TensorDataset(torch.tensor(X_train.astype(np.float32)).to(device), torch.tensor(y_train.astype(np.float32)).to(device))
+    test_set = TensorDataset(torch.tensor(X_test.astype(np.float32)).to(device), torch.tensor(y_test.astype(np.float32)).to(device))
 
     train_len = int(len(train_set) * 0.95)
     train_sub, valid_set = random_split(train_set, [train_len, len(train_set) - train_len])
@@ -169,7 +170,7 @@ def train_main(args):
 
 if __name__ == '__main__':
     from args import rrl_args
-    # for arg in vars(rrl_args):
-    #     print(arg, getattr(rrl_args, arg))
+    for arg in vars(rrl_args):
+        print(arg, getattr(rrl_args, arg))
     train_main(rrl_args)
     test_model(rrl_args)
