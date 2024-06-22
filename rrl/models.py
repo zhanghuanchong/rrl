@@ -27,7 +27,7 @@ class Net(nn.Module):
         prev_layer_dim = dim_list[0]
         for i in range(1, len(dim_list)):
             num = prev_layer_dim
-            
+
             skip_from_layer = None
             if self.use_skip and i >= 4:
                 skip_from_layer = self.layer_list[-2]
@@ -44,7 +44,7 @@ class Net(nn.Module):
                 layer_use_not = True if i != 2 else False
                 layer = UnionLayer(dim_list[i], num, use_nlaf=use_nlaf, estimated_grad=estimated_grad, use_not=layer_use_not, alpha=alpha, beta=beta, gamma=gamma)
                 layer_name = 'union{}'.format(i)
-            
+
             layer.conn = lambda: None  # create an empty class to save the connections
             layer.conn.prev_layer = self.layer_list[-1] if len(self.layer_list) > 0 else None
             layer.conn.is_skip_to_layer = False
@@ -65,7 +65,7 @@ class Net(nn.Module):
             if layer.conn.is_skip_to_layer:
                 layer.x_res = x
         return x
-    
+
     def bi_forward(self, x, count=False):
         for layer in self.layer_list:
             if layer.conn.skip_from_layer is not None:
@@ -84,7 +84,7 @@ class MyDistributedDataParallel(torch.nn.parallel.DistributedDataParallel):
     @property
     def layer_list(self):
         return self.module.layer_list
-    
+
     @property
     def t(self):
         return self.module.t
@@ -92,7 +92,7 @@ class MyDistributedDataParallel(torch.nn.parallel.DistributedDataParallel):
 
 class RRL:
     def __init__(self, dim_list, device_id, use_not=False, is_rank0=False, log_file=None, writer=None, left=None,
-                 right=None, save_best=False, estimated_grad=False, save_path=None, distributed=True, use_skip=False, 
+                 right=None, save_best=False, estimated_grad=False, save_path=None, distributed=True, use_skip=False,
                  use_nlaf=False, alpha=0.999, beta=8, gamma=1, temperature=0.01):
         super(RRL, self).__init__()
         self.dim_list = dim_list
@@ -130,25 +130,25 @@ class RRL:
         """Clip the weights into the range [0, 1]."""
         for layer in self.net.layer_list[: -1]:
             layer.clip()
-    
+
     def edge_penalty(self):
         edge_penalty = 0.0
         for layer in self.net.layer_list[1: -1]:
             edge_penalty += layer.edge_count()
         return edge_penalty
-    
+
     def l1_penalty(self):
         l1_penalty = 0.0
         for layer in self.net.layer_list[1: ]:
             l1_penalty += layer.l1_norm()
         return l1_penalty
-    
+
     def l2_penalty(self):
         l2_penalty = 0.0
         for layer in self.net.layer_list[1: ]:
             l2_penalty += layer.l2_norm()
         return l2_penalty
-    
+
     def mixed_penalty(self):
         penalty = 0.0
         for layer in self.net.layer_list[1: -1]:
@@ -164,7 +164,7 @@ class RRL:
             param_group['lr'] = lr
         return optimizer
 
-    def train_model(self, data_loader=None, valid_loader=None, epoch=50, lr=0.01, lr_decay_epoch=100, 
+    def train_model(self, data_loader=None, valid_loader=None, epoch=50, lr=0.01, lr_decay_epoch=100,
                     lr_decay_rate=0.75, weight_decay=0.0, log_iter=50):
 
         if data_loader is None:
@@ -193,17 +193,17 @@ class RRL:
                 X = X.cuda(self.device_id, non_blocking=True)
                 y = y.cuda(self.device_id, non_blocking=True)
                 optimizer.zero_grad()  # Zero the gradient buffers.
-                
+
                 # trainable softmax temperature
                 y_bar = self.net.forward(X) / torch.exp(self.net.t)
                 y_arg = torch.argmax(y, dim=1)
-                
+
                 loss_rrl = criterion(y_bar, y_arg) + weight_decay * self.l2_penalty()
-                
+
                 ba_loss_rrl = loss_rrl.item()
                 epoch_loss_rrl += ba_loss_rrl
                 avg_batch_loss_rrl += ba_loss_rrl
-                
+
                 loss_rrl.backward()
 
                 cnt += 1
@@ -216,7 +216,7 @@ class RRL:
                         avg_batch_loss_rrl = 0.0
 
                 optimizer.step()
-                
+
                 if self.is_rank0:
                     for i, param in enumerate(self.net.parameters()):
                         abs_gradient_max = max(abs_gradient_max, abs(torch.max(param.grad)))
@@ -228,12 +228,12 @@ class RRL:
                         acc_b, f1_b = self.test(test_loader=valid_loader, set_name='Validation')
                     else: # use the data_loader as the valid loader
                         acc_b, f1_b = self.test(test_loader=data_loader, set_name='Training')
-                    
+
                     if self.save_best and (f1_b > self.best_f1 or (np.abs(f1_b - self.best_f1) < 1e-10 and self.best_loss > epoch_loss_rrl)):
                         self.best_f1 = f1_b
                         self.best_loss = epoch_loss_rrl
                         self.save_model()
-                    
+
                     accuracy_b.append(acc_b)
                     f1_score_b.append(f1_b)
                     if self.writer is not None:
@@ -253,12 +253,12 @@ class RRL:
     def test(self, test_loader=None, set_name='Validation'):
         if test_loader is None:
             raise Exception("Data loader is unavailable!")
-        
+
         y_list = []
         for X, y in test_loader:
             y_list.append(y)
         y_true = torch.cat(y_list, dim=0)
-        y_true = y_true.cpu().numpy().astype(np.int)
+        y_true = y_true.cpu().numpy().astype(int)
         y_true = np.argmax(y_true, axis=1)
         data_num = y_true.shape[0]
 
@@ -289,7 +289,7 @@ class RRL:
         return accuracy_b, f1_score_b
 
     def save_model(self):
-        rrl_args = {'dim_list': self.dim_list, 'use_not': self.use_not, 'use_skip': self.use_skip, 'estimated_grad': self.estimated_grad, 
+        rrl_args = {'dim_list': self.dim_list, 'use_not': self.use_not, 'use_skip': self.use_skip, 'estimated_grad': self.estimated_grad,
                     'use_nlaf': self.use_nlaf, 'alpha': self.alpha, 'beta': self.beta, 'gamma': self.gamma}
         torch.save({'model_state_dict': self.net.state_dict(), 'rrl_args': rrl_args}, self.save_path)
 
@@ -325,10 +325,10 @@ class RRL:
         # for LR Layr
         layer = self.net.layer_list[-1]
         layer.get_rule2weights(layer.conn.prev_layer, layer.conn.skip_from_layer)
-        
+
         if not display:
             return layer.rule2weights
-        
+
         print('RID', end='\t', file=file)
         for i, ln in enumerate(label_name):
             print('{}(b={:.4f})'.format(ln, layer.bl[i]), end='\t', file=file)
