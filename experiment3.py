@@ -220,7 +220,6 @@ def _bootstrap_ci(metric_fn, n_bootstrap=2000, seed=42):
     """返回 (point_estimate, ci_lower, ci_upper)。
     metric_fn(indices) 应返回标量指标。"""
     rng = np.random.RandomState(seed)
-    n = metric_fn.__code__.co_varnames  # 占位，实际不用
     scores = []
     for _ in range(n_bootstrap):
         idx = rng.choice(metric_fn._n, size=metric_fn._n, replace=True)
