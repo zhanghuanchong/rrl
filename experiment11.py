@@ -176,6 +176,14 @@ def train_model(gpu, args):
 def train_fold(args, fold_k):
     """Train model for a single fold and return the saved model path."""
     original_kfold = args.ith_kfold
+
+    # Ensure 'model' and 'log' attributes exist (they are set in args.py but
+    # may be absent if the arg-parsing script on this machine differs).
+    if not hasattr(args, 'model'):
+        args.model = os.path.join(args.folder_path, 'model.pth')
+    if not hasattr(args, 'log'):
+        args.log = os.path.join(args.folder_path, 'log.txt')
+
     original_model = args.model
     original_log = args.log
 
@@ -320,6 +328,16 @@ def cross_validate(args):
 
 def test_model(args, model_path=None):
     """Evaluate a trained model on the 20 % independent hold-out test set."""
+    # Ensure optional attributes exist
+    if not hasattr(args, 'model'):
+        args.model = os.path.join(args.folder_path, 'model.pth')
+    if not hasattr(args, 'test_res'):
+        args.test_res = os.path.join(args.folder_path, 'test_res.txt')
+    if not hasattr(args, 'rrl_file'):
+        args.rrl_file = os.path.join(args.folder_path, 'rrl.txt')
+    if not hasattr(args, 'print_rule'):
+        args.print_rule = False
+
     if model_path is None:
         model_path = args.model
 
