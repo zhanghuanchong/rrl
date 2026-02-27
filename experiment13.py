@@ -632,16 +632,35 @@ if __name__ == '__main__':
     parser.add_argument('-i', '--device_ids', type=str, default='0',
                         help='GPU 设备 ID，多个用 @ 分隔，如 0@1')
     parser.add_argument('-nr', '--nr', default=0, type=int, help='节点排名')
+    parser.add_argument('-e', '--epoch', type=int, default=41, help='训练轮次')
+    parser.add_argument('-bs', '--batch_size', type=int, default=64, help='批大小')
+    parser.add_argument('-lr', '--learning_rate', type=float, default=0.01, help='初始学习率')
+    parser.add_argument('-lrdr', '--lr_decay_rate', type=float, default=0.75, help='学习率衰减率')
+    parser.add_argument('-lrde', '--lr_decay_epoch', type=int, default=10, help='学习率衰减轮次')
+    parser.add_argument('-wd', '--weight_decay', type=float, default=0.0, help='权重衰减(L2正则)')
+    parser.add_argument('-ki', '--ith_kfold', type=int, default=0, help='第 i 折交叉验证, 0 <= ki < 5')
+    parser.add_argument('-rc', '--round_count', type=int, default=0, help='实验轮次计数')
     parser.add_argument('-ma', '--master_address', type=str, default='127.0.0.1',
                         help='主节点地址')
     parser.add_argument('-mp', '--master_port', type=str, default='0',
                         help='主节点端口')
     parser.add_argument('-li', '--log_iter', type=int, default=500,
                         help='每隔多少迭代记录一次日志')
+    parser.add_argument('--nlaf', action='store_true', help='使用 NLAF 激活函数')
+    parser.add_argument('--alpha', type=float, default=0.999, help='NLAF alpha')
+    parser.add_argument('--beta', type=int, default=8, help='NLAF beta')
+    parser.add_argument('--gamma', type=int, default=1, help='NLAF gamma')
+    parser.add_argument('--temp', type=float, default=1.0, help='温度系数')
+    parser.add_argument('--use_not', action='store_true', help='使用 NOT 算子')
     parser.add_argument('--save_best', action='store_true',
                         help='在验证集上保存最优模型')
+    parser.add_argument('--skip', action='store_true', help='使用跳连接')
+    parser.add_argument('--estimated_grad', action='store_true', help='使用估计梯度')
+    parser.add_argument('--weighted', action='store_true', help='使用加权损失')
     parser.add_argument('--print_rule', action='store_true',
                         help='打印规则')
+    parser.add_argument('-s', '--structure', type=str, default='5@64',
+                        help='二值化层和逻辑层结构，如 10@64, 10@64@32@16')
     parser.add_argument('-o', '--output_dir', type=str, default='log_folder/grid_search',
                         help='网格搜索输出目录')
 
