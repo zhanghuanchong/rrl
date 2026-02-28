@@ -45,27 +45,29 @@ DATA_DIR = './dataset'
 # ════════════════════════════════════════════════════════════════════════════
 
 param_grid = {
-    "learning_rate": [0.002, 0.0005, 0.0002],
-    "lr_decay_rate": [0.75, 0.8],
-    "lr_decay_epoch": [80, 100],
-    "weight_decay": [1e-3, 1e-4, 1e-5],
-    "batch_size": [64, 128],
-    "epoch": [300, 400],
+    "learning_rate": [0.001, 0.0001, 0.0005],
+    "lr_decay_epoch": [400],
+    "weight_decay": [1e-3, 1e-4, 1e-5, 0],
+    "batch_size": [32, 64],
+    "epoch": [800],
     "structure": [
         "5@64",
         "5@64@32",
         "10@64",
         "10@64@32",
+        "2@64@32",
+        "2@256@256",
+        "2@256",
+        "4@256@32"
     ],
-    "temp": [1.0, 0.1, 0.01],
+    "temp": [0.01],  # 选最好的
     "use_not": [False, True],
     "skip": [False, True],
-    "alpha": [0.999, 0.9],
-    "beta": [3, 8],
-    "gamma": [1, 3],
-    "nlaf": [True, False],
-    "estimated_grad": [False, True],
-    "weighted": [True, False],
+    # 这三个参数只试那三种组合，现在这样是8种
+    "alpha": [0.9],
+    "beta": [3],
+    "gamma": [3],
+    "nlaf": [True],
 }
 
 
