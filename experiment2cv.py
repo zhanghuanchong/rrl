@@ -508,6 +508,19 @@ def grid_search_cv(args, grid=None):
                 k + 1, fold_metric['Accuracy'], fold_metric['F1'],
                 '{:.4f}'.format(fold_metric['AUC']) if fold_metric['AUC'] is not None else 'N/A'))
 
+            # 为当前折生成 rrl.txt（规则文件）
+            train_idx, _ = list(skf.split(X, y_labels))[k]
+            train_set_for_rules = TensorDataset(
+                torch.tensor(X[train_idx].astype(np.float32)),
+                torch.tensor(y[train_idx].astype(np.float32)))
+            train_loader_for_rules = DataLoader(
+                train_set_for_rules, batch_size=args_copy.batch_size, shuffle=False)
+            # 强制写出 rrl.txt
+            args_copy_for_rules = copy.copy(args_copy)
+            args_copy_for_rules.print_rule = True
+            _print_rules(rrl, db_enc, train_loader_for_rules, args_copy_for_rules)
+            logging.info('  Fold {} 规则已保存至: {}'.format(k + 1, args_copy.rrl_file))
+
             fold_results.append(fold_metric)
             fold_model_paths.append(args_copy.model)
 
