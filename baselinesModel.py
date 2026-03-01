@@ -14,6 +14,7 @@ import scipy.stats as stats
 from typing import Tuple, Dict, List
 from sklearn.model_selection import train_test_split, StratifiedKFold, GridSearchCV
 from sklearn.preprocessing import StandardScaler, LabelEncoder, LabelBinarizer
+from sklearn.base import clone
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.metrics import (
     roc_auc_score, roc_curve, f1_score, classification_report, confusion_matrix,
@@ -66,34 +67,34 @@ def safe_bootstrap_metric(y_true, y_score, metric_func, n_bootstraps=1000):
     min_len = min(len(y_true), len(y_score))
     y_true = y_true[:min_len]
     y_score = y_score[:min_len]
-    
+
     # 步骤2：提前判断是否可计算AUC
     if metric_func == roc_auc_score:
         if len(np.unique(y_true)) < 2:
             return 0.0, (0.0, 0.0)
-    
+
     # 步骤3：自定义Bootstrap（完全不使用sklearn的resample,避免内置逻辑报错）
     metrics = []
     rng = np.random.RandomState(RANDOM_SEED)
     n_samples = len(y_true)
-    
+
     for _ in range(n_bootstraps):
         # 手动生成重采样索引（确保长度绝对一致）
         idx = rng.randint(0, n_samples, size=n_samples)
         y_t = y_true[idx]
         y_s = y_score[idx]
-        
+
         # 跳过单类别
         if metric_func == roc_auc_score and len(np.unique(y_t)) < 2:
             continue
-        
+
         # 强制捕获所有异常,避免中断
         try:
             score = metric_func(y_t, y_s)
             metrics.append(score)
         except:
             continue
-    
+
     # 步骤4：返回结果（无有效值时退回到普通计算）
     if len(metrics) == 0:
         try:
@@ -101,7 +102,7 @@ def safe_bootstrap_metric(y_true, y_score, metric_func, n_bootstraps=1000):
             return score, (score, score)
         except:
             return 0.0, (0.0, 0.0)
-    
+
     mean_score = np.mean(metrics)
     ci = np.percentile(metrics, [2.5, 97.5])
     return mean_score, ci
@@ -124,7 +125,7 @@ def calculate_extended_metrics(y_true, y_pred, y_pred_proba, task_type):
     y_true = np.array(y_true).ravel()  # 标签转为一维数组
     y_pred = np.array(y_pred).ravel()  # 预测标签转为一维数组
     y_pred_proba = np.array(y_pred_proba)  # 预测概率保留原维度（多分类为N×k）
-    
+
     # ========== 核心修复2：强制样本数完全对齐 ==========
     # 1. 确定最小样本数（覆盖所有输入）
     min_samples = len(y_true)
@@ -133,14 +134,14 @@ def calculate_extended_metrics(y_true, y_pred, y_pred_proba, task_type):
     # 多分类时y_pred_proba是二维数组,取第一维长度
     if len(y_pred_proba.shape) >= 1 and y_pred_proba.shape[0] < min_samples:
         min_samples = y_pred_proba.shape[0]
-    
+
     # 2. 截断所有输入到最小样本数
     if min_samples < len(y_true):
         print(f"Warning: Sample size mismatch! Truncating to {min_samples} samples")
         y_true = y_true[:min_samples]
         y_pred = y_pred[:min_samples]
         y_pred_proba = y_pred_proba[:min_samples]
-    
+
     # ========== 二分类概率格式兼容 ==========
     if task_type == 'binary':
         # 确保二分类概率是N×2的格式
@@ -278,7 +279,7 @@ def plot_multiclass_confusion_matrix(y_true, y_pred, label_encoder, model_name, 
     print(f"Plotting confusion matrix for {model_name}...")
     class_names = label_encoder.classes_
     cm = confusion_matrix(y_true, y_pred)
-    
+
     if normalize:
         cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
         cm = np.round(cm, 4)
@@ -346,7 +347,7 @@ def data_preprocessing_opt(df: pd.DataFrame, label_col: str) -> Tuple[pd.DataFra
         knn_imputer = KNNImputer(n_neighbors=5, weights='distance')
         X_num_imputed = knn_imputer.fit_transform(X[num_features])
         X_num_imputed = pd.DataFrame(X_num_imputed, columns=num_features, index=X.index)
-        
+
         # 异常值处理
         for col in num_features:
             mean = X_num_imputed[col].mean()
@@ -365,7 +366,7 @@ def data_preprocessing_opt(df: pd.DataFrame, label_col: str) -> Tuple[pd.DataFra
         cat_imputer = SimpleImputer(strategy='most_frequent', fill_value='Unknown')
         X_cat_imputed = cat_imputer.fit_transform(X[cat_features])
         X_cat_imputed = pd.DataFrame(X_cat_imputed, columns=cat_features, index=X.index)
-        
+
         # 编码分类特征
         for col in cat_features:
             le_cat = LabelEncoder()
@@ -410,7 +411,7 @@ def plot_numeric_feature_histogram(X: pd.DataFrame, num_features: List[str], tas
         mu, sigma = norm.fit(X[feature])
         x = np.linspace(X[feature].min(), X[feature].max(), 100)
         ax.plot(x, norm.pdf(x, mu, sigma), 'r--', linewidth=2, label=f'Normal fit (μ={mu:.2f}, σ={sigma:.2f})')
-        
+
         ax.set_title(f'Frequency Distribution of {feature}', fontsize=12)
         ax.set_xlabel(feature, fontsize=10)
         ax.set_ylabel('Density', fontsize=10)
@@ -475,7 +476,7 @@ def plot_model_complexity_vs_auc(performance_list: List[Dict], task_type: str):
             ensemble_auc = roc_auc_score(y_test, ensemble_y_proba, multi_class="ovr", average="weighted")
         else:
             ensemble_auc = roc_auc_score(y_test, ensemble_y_proba[:, 1])
-        
+
         core_model_log_edges = [
             p["Log_Model_Edges"] for p in performance_list
             if p["Model Name"] in ["RandomForest", "ExtraTrees", "GBM", "XGBoost"]
@@ -504,7 +505,7 @@ def plot_model_complexity_vs_auc(performance_list: List[Dict], task_type: str):
 
     for i, txt in enumerate(model_names):
         ax.annotate(
-            txt, 
+            txt,
             (log_edges[i], auc_scores[i]),
             xytext=(5, 5),
             textcoords="offset points",
@@ -560,7 +561,7 @@ def plot_model_roc_pr_curve(y_true, y_pred_proba, model_name, task_type):
         fpr, tpr, _ = roc_curve(y_true_binarized.ravel(), y_pred_proba.ravel())
         roc_auc = roc_auc_score(y_true_binarized, y_pred_proba, multi_class='ovr', average='micro')
         plt.plot(fpr, tpr, lw=2, label=f"{model_name}\nMicro-AUC = {roc_auc:.4f}")
-    
+
     plt.plot([0, 1], [0, 1], lw=2, linestyle='--', color='gray', label="Random Guess")
     plt.xlabel("1 - Specificity (FPR)", fontsize=11)
     plt.ylabel("Sensitivity (TPR)", fontsize=11)
@@ -588,7 +589,7 @@ def plot_model_roc_pr_curve(y_true, y_pred_proba, model_name, task_type):
         precision, recall, _ = precision_recall_curve(y_true_binarized.ravel(), y_pred_proba.ravel())
         auprc = auc(recall, precision)
         plt.plot(recall, precision, lw=2, label=f"{model_name}\nMicro-AUPRC = {auprc:.4f}")
-    
+
     pos_ratio = np.sum(y_true) / len(y_true)
     plt.plot([0, 1], [pos_ratio, pos_ratio], lw=2, linestyle='--', color='gray', label="Random Guess")
     plt.xlabel("Recall", fontsize=11)
@@ -632,7 +633,7 @@ def extract_and_visualize_feature_importance(models: Dict, X: pd.DataFrame, feat
         indices = np.argsort(importances)[::-1]
         top_n = min(20, len(feature_names))
         top_indices = indices[:top_n]
-        
+
         plt.bar(range(top_n), importances[top_indices], align='center', color='skyblue', alpha=0.8)
         plt.xticks(range(top_n), [feature_names[i] for i in top_indices], rotation=45, ha='right')
         plt.xlabel('Feature Names', fontsize=12)
@@ -660,14 +661,14 @@ def plot_combined_roc_pr_curve(model_perf_data, task_type):
     ax_roc.set_xlabel('1 - Specificity (FPR)', fontsize=12)
     ax_roc.set_ylabel('Sensitivity (TPR)', fontsize=12)
     ax_roc.plot([0, 1], [0, 1], 'k--', lw=2, label='Random Guess')
-    
+
     for model_data, color in zip(model_perf_data, color_cycle):
         model_name = model_data['model_name']
         fpr = model_data['fpr']
         tpr = model_data['tpr']
         roc_auc = model_data['roc_auc']
         ax_roc.plot(fpr, tpr, color=color, lw=2, label=f'{model_name}\nAUC = {roc_auc:.4f}')
-    
+
     ax_roc.legend(
                 loc='lower right',
                 fontsize=8,
@@ -686,7 +687,7 @@ def plot_combined_roc_pr_curve(model_perf_data, task_type):
     y_true = model_perf_data[0]['y_true']
     pos_ratio = np.sum(y_true) / len(y_true)
     ax_pr.plot([0, 1], [pos_ratio, pos_ratio], 'k--', lw=2, label='Random Guess')
-    
+
     color_cycle = cycle(['aqua', 'darkorange', 'cornflowerblue', 'green', 'red', 'purple', 'brown', 'pink', 'gray', 'olive'])
     for model_data, color in zip(model_perf_data, color_cycle):
         model_name = model_data['model_name']
@@ -694,7 +695,7 @@ def plot_combined_roc_pr_curve(model_perf_data, task_type):
         precision = model_data['precision']
         auprc = model_data['auprc']
         ax_pr.plot(recall, precision, color=color, lw=2, label=f'{model_name}\nAUPRC = {auprc:.4f}')
-    
+
     ax_pr.legend(
                 loc='lower right',
                 fontsize=8,
@@ -715,37 +716,40 @@ def plot_combined_roc_pr_curve(model_perf_data, task_type):
     print("="*50)
 
 def evaluate_model_with_cv(model, X, y, X_test, y_test, model_name, task_type):
-    """使用5折交叉验证评估模型并计算均值 + 测试集指标（修复样本数不一致+scaler未定义问题）"""
+    """使用5折交叉验证评估模型并计算均值 + 测试集指标（每折模型预测测试集后取平均值）"""
     print(f"\nEvaluating {model_name} with {K_FOLD}-fold cross validation...")
-    
+
     # 确保X是DataFrame,y是一维数组
     if not isinstance(X, pd.DataFrame):
         X = pd.DataFrame(X)
     y = np.array(y).ravel()  # 确保y是一维,避免维度错误
-    
+
     cv = StratifiedKFold(n_splits=K_FOLD, shuffle=True, random_state=RANDOM_SEED)
     metrics_list = []
     all_y_pred_proba = []
     all_y_true = []
-    
+
     # 存储每折的指标
     fold_metrics = {
         'Accuracy': [], 'Precision': [], 'Recall': [], 'F1-Score': [],
         'Sensitivity': [], 'Specificity': [], 'PPV': [], 'NPV': [], 'AUC': [],
         'AUC_95%CI': [], 'Accuracy_95%CI': []
     }
-    
+
+    # 存储每折模型对测试集的预测概率（用于取平均）
+    fold_test_pred_proba_list = []
+
     for fold, (train_idx, val_idx) in enumerate(cv.split(X, y)):
         print(f"\n===== Fold {fold+1}/{K_FOLD} =====")
-        
+
         # 关键：通过索引分割,确保样本数严格一致
         X_train, X_val = X.iloc[train_idx].copy(), X.iloc[val_idx].copy()
         y_train, y_val = y[train_idx].copy(), y[val_idx].copy()
-        
+
         # 打印分割后样本数,校验一致性
         print(f"训练集：X={X_train.shape[0]}样本, y={len(y_train)}样本")
         print(f"验证集：X={X_val.shape[0]}样本, y={len(y_val)}样本")
-        
+
         # 标准化（修复scaler未定义问题：先初始化,再判断是否有数值列）
         # 步骤1：筛选数值列
         numeric_cols = X_train.select_dtypes(include=[np.number]).columns
@@ -760,43 +764,56 @@ def evaluate_model_with_cv(model, X, y, X_test, y_test, model_name, task_type):
             X_val_scaled[numeric_cols] = scaler.transform(X_val_scaled[numeric_cols])
         else:
             print("警告：无数值特征,跳过标准化")
-        
+
+        # 克隆模型参数，避免不同折之间互相影响
+        fold_model = clone(model)
+
         # 训练模型
-        model.fit(X_train_scaled, y_train)
-        
+        fold_model.fit(X_train_scaled, y_train)
+
         # 预测（确保预测概率是一维数组,核心修复）
-        y_pred = model.predict(X_val_scaled)
+        y_pred = fold_model.predict(X_val_scaled)
         try:
             # 多分类时返回完整概率矩阵,二分类取正类概率
-            y_pred_proba = model.predict_proba(X_val_scaled)
+            y_pred_proba = fold_model.predict_proba(X_val_scaled)
             if task_type == 'binary':
                 y_pred_proba = y_pred_proba[:, 1]
         except:
             # 若模型无predict_proba（如SVM）,用predict替代
             y_pred_proba = y_pred
             print(f"{model_name} 无predict_proba方法,使用预测标签替代概率")
-        
+
         # 强制转为一维数组,避免维度错误导致样本数异常
         y_pred_proba = np.array(y_pred_proba).ravel()
         y_val = np.array(y_val).ravel()
         y_pred = np.array(y_pred).ravel()
-        
+
         # 打印预测结果样本数,定位问题
         print(f"验证集标签数：{len(y_val)}, 预测标签数：{len(y_pred)}, 预测概率数：{len(y_pred_proba)}")
-        
+
         # 计算指标（包含Bootstrap）
         metrics = calculate_extended_metrics(y_val, y_pred, y_pred_proba, task_type)
-        
+
         # 保存每折的指标
         for key in fold_metrics.keys():
             if key in metrics:
                 fold_metrics[key].append(metrics[key])
-        
+
         # 收集所有预测结果（对齐样本数后）
         min_len = min(len(y_val), len(y_pred_proba))
         all_y_true.append(y_val[:min_len])
         all_y_pred_proba.append(y_pred_proba[:min_len])
-    
+
+        # ========== 每折模型对测试集进行预测（用于取平均） ==========
+        try:
+            fold_test_pred_proba = fold_model.predict_proba(X_test)
+        except:
+            # 若模型无predict_proba,用predict替代
+            fold_test_pred_proba = np.eye(len(np.unique(y)))[fold_model.predict(X_test).astype(int)]
+            print(f"{model_name} Fold {fold+1} 无predict_proba方法,使用one-hot编码替代概率（测试集）")
+        fold_test_pred_proba_list.append(fold_test_pred_proba)
+        print(f"Fold {fold+1} 测试集预测概率 shape: {fold_test_pred_proba.shape}")
+
     # 计算CV均值
     mean_metrics = {}
     for key in fold_metrics.keys():
@@ -810,30 +827,30 @@ def evaluate_model_with_cv(model, X, y, X_test, y_test, model_name, task_type):
                 mean_metrics[key] = (0.0, 0.0)
         else:
             mean_metrics[key] = round(np.mean(fold_metrics[key]), 4) if fold_metrics[key] else 0.0
-    
-    # ========== 新增：计算测试集指标 ==========
-    print(f"\nCalculating {model_name} test set metrics...")
-    # 对测试集做预测
-    y_test_pred = model.predict(X_test)
-    try:
-        y_test_pred_proba = model.predict_proba(X_test)
-        # 二分类时需要调整概率格式（适配calculate_extended_metrics）
-        if task_type == 'binary':
-            y_test_pred_proba_2d = np.column_stack([1 - y_test_pred_proba[:, 1], y_test_pred_proba[:, 1]])
-        else:
-            y_test_pred_proba_2d = y_test_pred_proba
-    except:
-        y_test_pred_proba = y_test_pred
-        y_test_pred_proba_2d = y_test_pred
-        print(f"{model_name} 无predict_proba方法,使用预测标签替代概率（测试集）")
-    
-    # 计算测试集指标
-    test_metrics = calculate_extended_metrics(y_test, y_test_pred, y_test_pred_proba_2d, task_type)
-    
-    # 计算模型复杂度
-    model_edges = calculate_model_edges(model, model_name)
+
+    # ========== 核心修改：测试集预测结果为5折模型预测的平均值 ==========
+    print(f"\nCalculating {model_name} test set metrics (average of {K_FOLD}-fold predictions)...")
+
+    # 将每折的测试集预测概率取平均
+    fold_test_pred_proba_array = np.array(fold_test_pred_proba_list)  # shape: (K_FOLD, n_test, n_classes)
+    avg_test_pred_proba = np.mean(fold_test_pred_proba_array, axis=0)  # shape: (n_test, n_classes)
+    avg_test_pred = np.argmax(avg_test_pred_proba, axis=0) if avg_test_pred_proba.ndim == 1 else np.argmax(avg_test_pred_proba, axis=1)
+
+    print(f"5折平均测试集预测概率 shape: {avg_test_pred_proba.shape}")
+
+    # 二分类时需要调整概率格式（适配calculate_extended_metrics）
+    if task_type == 'binary':
+        y_test_pred_proba_2d = avg_test_pred_proba  # 已经是 (n_test, 2) 格式
+    else:
+        y_test_pred_proba_2d = avg_test_pred_proba
+
+    # 计算测试集指标（基于5折平均预测）
+    test_metrics = calculate_extended_metrics(y_test, avg_test_pred, y_test_pred_proba_2d, task_type)
+
+    # 计算模型复杂度（使用最后一折的模型）
+    model_edges = calculate_model_edges(fold_model, model_name)
     log_model_edges = np.log10(model_edges) if model_edges > 0 else 0.0
-    
+
     # 准备返回结果（包含CV和Test两类指标）
     performance = {
         # CV指标（原有）
@@ -849,7 +866,7 @@ def evaluate_model_with_cv(model, X, y, X_test, y_test, model_name, task_type):
         "CV_Specificity": mean_metrics['Specificity'],
         "CV_PPV": mean_metrics['PPV'],
         "CV_NPV": mean_metrics['NPV'],
-        # Test指标（新增）
+        # Test指标（5折平均预测结果）
         "Test_Accuracy": test_metrics['Accuracy'],
         "Test_Accuracy_95%CI": test_metrics['Accuracy_95%CI'],
         "Test_AUC": test_metrics['AUC'],
@@ -863,14 +880,17 @@ def evaluate_model_with_cv(model, X, y, X_test, y_test, model_name, task_type):
         "Test_NPV": test_metrics['NPV'],
         # 模型复杂度
         "Model_Edges": model_edges,
-        "Log_Model_Edges": log_model_edges
+        "Log_Model_Edges": log_model_edges,
+        # 保存5折平均的测试集预测结果（供后续保存CSV使用）
+        "Test_Avg_Pred": avg_test_pred,
+        "Test_Avg_Pred_Proba": avg_test_pred_proba
     }
-    
+
     # 打印汇总结果
     print(f"\n{model_name} 评估结果汇总：")
     print(f"CV均值 - Accuracy: {mean_metrics['Accuracy']}, AUC: {mean_metrics['AUC']}")
-    print(f"测试集 - Accuracy: {test_metrics['Accuracy']}, AUC: {test_metrics['AUC']}")
-    
+    print(f"测试集(5折平均) - Accuracy: {test_metrics['Accuracy']}, AUC: {test_metrics['AUC']}")
+
     return performance, all_y_true, all_y_pred_proba
 # ---------------------- 任务类型判断 ----------------------
 def auto_judge_task_type(y: pd.Series) -> str:
@@ -1006,14 +1026,14 @@ def train_and_optimize_models(models: Dict, param_grids: Dict, X_train: pd.DataF
             n_jobs=N_JOBS,
             verbose=0
         )
-        
+
         grid_search.fit(X_train, y_train)
-        
+
         train_time = time.time() - start_time
         best_model = grid_search.best_estimator_
         best_model.grid_search_time = train_time
         trained_models[model_name] = best_model
-        
+
         print(f"Model {model_name} training completed!")
         print(f"Best parameters: {grid_search.best_params_}")
         print(f"Cross-validation best score: {round(grid_search.best_score_, 4)}")
@@ -1062,7 +1082,7 @@ def visualize_basic_results(performance_list, ensemble_results, task_type, label
 
     ensemble_y_pred, ensemble_y_proba = ensemble_results
     y_true = performance_list[0].get('y_test', None)
-    
+
     if y_true is not None:
         if task_type == "binary":
             ensemble_f1 = round(f1_score(y_true, ensemble_y_pred, average='binary'), 4)
@@ -1070,7 +1090,7 @@ def visualize_basic_results(performance_list, ensemble_results, task_type, label
         else:
             ensemble_f1 = round(f1_score(y_true, ensemble_y_pred, average='weighted'), 4)
             ensemble_auc = round(roc_auc_score(y_true, ensemble_y_proba, multi_class='ovr', average='weighted'), 4)
-        
+
         model_names.append("Ensemble (Soft Voting)")
         auc_scores.append(ensemble_auc)
         f1_scores.append(ensemble_f1)
@@ -1082,10 +1102,10 @@ def visualize_basic_results(performance_list, ensemble_results, task_type, label
     plt.title(f'Model CV AUC Comparison ({task_type})', fontsize=14)
     plt.ylabel('CV AUC Score', fontsize=12)
     plt.xticks(rotation=45, ha='right')
-    
+
     for bar, score in zip(bars, auc_scores):
         plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, f'{score:.4f}', ha='center', fontsize=10)
-    
+
     plt.tight_layout()
     plt.savefig(f'model_auc_comparison_{task_type}.png', dpi=300, bbox_inches='tight')
     plt.close()
@@ -1096,10 +1116,10 @@ def visualize_basic_results(performance_list, ensemble_results, task_type, label
     plt.title(f'Model CV F1-Score Comparison ({task_type})', fontsize=14)
     plt.ylabel('CV F1-Score', fontsize=12)
     plt.xticks(rotation=45, ha='right')
-    
+
     for bar, score in zip(bars, f1_scores):
         plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, f'{score:.4f}', ha='center', fontsize=10)
-    
+
     plt.tight_layout()
     plt.savefig(f'model_f1_comparison_{task_type}.png', dpi=300, bbox_inches='tight')
     plt.close()
@@ -1121,42 +1141,42 @@ def main(csv_path: str, label_col: str):
 
         # 2. 数据预处理
         X_processed, y_processed, feature_names, num_features, id_series, label_encoder = data_preprocessing_opt(df, label_col)
-        
+
         # 3. 自动判断任务类型
         task_type = auto_judge_task_type(y_processed)
         print(f"Auto-detected task type: {task_type}")
-        
+
         # 4. 直接使用预处理后的特征（删除特征工程）
         X_eng = X_processed.copy()
         final_feature_names = feature_names.copy()
         id_eng = id_series.copy()
-        
+
         # 5. 数据拆分
         X_train, X_test, y_train, y_test, id_train, id_test = train_test_split(
             X_eng, y_processed, id_eng,
             test_size=TEST_SIZE, stratify=y_processed, random_state=RANDOM_SEED
         )
-        
+
         y_train = y_train.values.ravel() if hasattr(y_train, 'values') else np.ravel(y_train)
         y_test = y_test.values.ravel() if hasattr(y_test, 'values') else np.ravel(y_test)
-        
+
         print(f"Data split completed:")
         print(f"  Train set: Features {X_train.shape}, Labels {y_train.shape}, ID {len(id_train)}")
         print(f"  Test set: Features {X_test.shape}, Labels {y_test.shape}, ID {len(id_test)}")
-        
+
         # 6. 标准化
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
         X_train_scaled = pd.DataFrame(X_train_scaled, columns=final_feature_names, index=X_train.index)
         X_test_scaled = pd.DataFrame(X_test_scaled, columns=final_feature_names, index=X_test.index)
-        
+
         # 7. 定义模型和参数网格
         models, param_grids = define_models_and_param_grids(task_type)
-        
+
         # 8. 训练模型
         trained_models = train_and_optimize_models(models, param_grids, X_train_scaled, y_train, task_type)
-        
+
         # 9. 使用5折交叉验证评估模型
         performance_list = []
         for model_name, model in trained_models.items():
@@ -1164,19 +1184,19 @@ def main(csv_path: str, label_col: str):
             performance, _, _ = evaluate_model_with_cv(model, X_train_scaled, y_train, X_test_scaled, y_test, model_name, task_type)
             performance['y_test'] = y_test  # 保存测试集标签用于后续绘图
             performance_list.append(performance)
-        
+
         # 10. 集成模型
         ensemble_y_pred, ensemble_y_proba = ensemble_model_fusion(trained_models, X_test_scaled, task_type)
         ensemble_results = (ensemble_y_pred, ensemble_y_proba)
-        
+
         # 计算集成模型的交叉验证指标
         ensemble_metrics = calculate_extended_metrics(y_test, ensemble_y_pred, ensemble_y_proba, task_type)
-        
+
         # 11. 收集ROC/PR数据
         print("Starting to collect ROC & PR data for all models...")
         model_perf_data = []
         y_true = y_test
-        
+
         # 基础模型
         for model_name, model in trained_models.items():
             y_pred_proba = model.predict_proba(X_test_scaled)
@@ -1192,7 +1212,7 @@ def main(csv_path: str, label_col: str):
                 roc_auc = roc_auc_score(y_true_binarized, y_pred_proba, multi_class='ovr', average='micro')
                 precision, recall, _ = precision_recall_curve(y_true_binarized.ravel(), y_pred_proba.ravel())
                 auprc = auc(recall, precision)
-            
+
             model_perf_data.append({
                 'model_name': model_name,
                 'fpr': fpr,
@@ -1203,7 +1223,7 @@ def main(csv_path: str, label_col: str):
                 'auprc': auprc,
                 'y_true': y_true
             })
-        
+
         # 集成模型
         if task_type == "binary":
             ens_fpr, ens_tpr, _ = roc_curve(y_true, ensemble_y_proba[:, 1])
@@ -1216,7 +1236,7 @@ def main(csv_path: str, label_col: str):
             ens_roc_auc = roc_auc_score(y_true_binarized, ensemble_y_proba, multi_class='ovr', average='micro')
             ens_precision, ens_recall, _ = precision_recall_curve(y_true_binarized.ravel(), ensemble_y_proba.ravel())
             ens_auprc = auc(ens_recall, ens_precision)
-        
+
         model_perf_data.append({
             'model_name': 'Ensemble (Soft Voting)',
             'fpr': ens_fpr,
@@ -1227,29 +1247,29 @@ def main(csv_path: str, label_col: str):
             'auprc': ens_auprc,
             'y_true': y_true
         })
-        
+
         # 绘制合并ROC/PR曲线
         plot_combined_roc_pr_curve(model_perf_data, task_type)
-        
+
         # 12. 基础结果可视化
         visualize_basic_results(performance_list, ensemble_results, task_type, label_encoder)
-        
+
         # 13. 特征重要性可视化
         extract_and_visualize_feature_importance(trained_models, X_train_scaled, final_feature_names, task_type)
-        
+
         # 14. 数值特征直方图
         plot_numeric_feature_histogram(X_processed, num_features, task_type)
-        
+
         # 15. Spearman相关性分析
         plot_spearman_correlation(X_processed, task_type)
-        
+
         # 16. 模型复杂度与AUC关系图
         plot_model_complexity_vs_auc(performance_list, task_type)
 
         # ========== 核心修改1：定义要分析的目标模型列表 ==========
         # 你可以按需修改这个列表，比如只保留 ['LogisticRegression', 'RandomForest']
         target_models = ['LogisticRegression', 'SVM']
-        
+
         # shap可视化
         shap_dict = {}
         # ========== 修复1：遍历目标模型（而非所有模型） ==========
@@ -1258,12 +1278,12 @@ def main(csv_path: str, label_col: str):
             if model_name not in target_models:
                 print(f"ℹ️  跳过非目标模型：{model_name}")
                 continue
-            
+
             # 跳过不支持SHAP的模型（如SVM线性核、KNN）
             if model_name in ['KNN']:
                 print(f"⚠️  {model_name} 暂不支持SHAP解释,跳过")
                 continue
-            
+
             print(f"\n📊 正在处理 {model_name} 的SHAP解释...")
             # ========== 修复2：适配不同模型的SHAP解释器 ==========
             background = X_train_scaled[:100]  # 背景数据取前100个样本（平衡速度和准确性）
@@ -1278,13 +1298,13 @@ def main(csv_path: str, label_col: str):
                 else:
                     # 其他模型使用通用解释器（如神经网络、LightGBM等）
                     explainer = shap.Explainer(model, background)
-            
+
                 # 2. 计算核心SHAP值（测试集）
                 shap_values = explainer(X_test_scaled)
                 # 分类任务中,SHAP值可能是二维（样本×特征）,需提取目标类别（如第1类）
                 if len(shap_values.shape) == 3:
                     shap_values = shap_values[:, :, 1]  # 取正类的SHAP值（根据你的标签调整）
-                
+
                 # 3. 尝试计算交互值（部分模型不支持,失败则跳过）
                 shap_interaction_values = None
                 try:
@@ -1292,7 +1312,7 @@ def main(csv_path: str, label_col: str):
                     print(f"✅ {model_name} 成功计算SHAP交互值")
                 except Exception as e:
                     print(f"⚠️ {model_name} 不支持计算SHAP交互值: {str(e)[:50]}")
-                
+
                 # 4. 将结果存入字典,便于后续复用
                 shap_dict[model_name] = {
                     "explainer": explainer,
@@ -1300,15 +1320,15 @@ def main(csv_path: str, label_col: str):
                     "shap_interaction_values": shap_interaction_values,
                     "feature_names": X_test_scaled.columns if hasattr(X_test_scaled, 'columns') else [f"特征{i}" for i in range(X_test_scaled.shape[1])]
                 }
-                
+
                 # 5. 生成并保存核心可视化图表
                 feature_names = shap_dict[model_name]["feature_names"]
-                
+
                 # 全局绘图设置
                 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
                 plt.rcParams['axes.unicode_minus'] = False
                 shap.initjs()
-                
+
                 # ==============================================
                 # 图1：SHAP特征重要性柱状图
                 # ==============================================
@@ -1319,7 +1339,7 @@ def main(csv_path: str, label_col: str):
                 plt.tight_layout()
                 plt.savefig(f"{model_name}_Clinical-shap_bar_plot.png", dpi=300, bbox_inches='tight')
                 plt.show()
-                
+
                 # ==============================================
                 # 图2：TOP5特征SHAP散点图
                 # ==============================================
@@ -1329,7 +1349,7 @@ def main(csv_path: str, label_col: str):
                 feat_imp_df = pd.DataFrame({"feature": feature_cols, "importance": feat_imp}).sort_values(by="importance", ascending=False)
                 top_n_features = feat_imp_df["feature"].head(min(5, len(feature_cols))).tolist()
                 print(f"\n生成 TOP{len(top_n_features)} 特征的 SHAP 散点图：{top_n_features}")
-                
+
                 for idx, feat in enumerate(top_n_features, 1):
                     plt.figure(figsize=(12, 8))
                     shap.dependence_plot(feat, shap_values.values, X_test_scaled, show=False, alpha=0.6, title=None)
@@ -1337,7 +1357,7 @@ def main(csv_path: str, label_col: str):
                     plt.tight_layout()
                     plt.savefig(f"{model_name}_Clinical-shap_scatter_TOP{idx}_{feat}.png", dpi=300, bbox_inches='tight')
                     plt.show()
-                
+
                 # ==============================================
                 # 图3：单样本SHAP力图
                 # ==============================================
@@ -1350,16 +1370,16 @@ def main(csv_path: str, label_col: str):
                     matplotlib=True,
                     show=False
                 )
-                
+
                 # ========== 核心调整：整体轴线下移（关键修改） ==========
                 # 1. 调整subplots_adjust：增大bottom值（底部留白更多）,适度调高top值
                 plt.subplots_adjust(top=0.8, bottom=0.2, left=0.05, right=0.95)
-                
+
                 # 2. 精准下移轴线（可选：进一步精细化控制）
                 ax = plt.gca()
                 current_pos = ax.get_position()
                 ax.set_position([current_pos.x0, 0.5, current_pos.width, current_pos.height])
-                
+
                 # 3. 保留原有f(x)文本上移逻辑
                 for text in ax.texts:
                     text_content = text.get_text()
@@ -1367,7 +1387,7 @@ def main(csv_path: str, label_col: str):
                         current_y = text.get_position()[1]
                         text.set_y(current_y +0.01)  # 按需微调偏移量
                         text.set_fontsize(10)  # 默认字体大小约10,改为8（可调6-9）
-                
+
                 # 调整标题：适配新的轴线位置
                 plt.title(
                     f"{model_name} -Clinical- Single Sample SHAP Force Plot (Sample Index: {sample_idx})",
@@ -1375,16 +1395,16 @@ def main(csv_path: str, label_col: str):
                     pad=30,
                     y=1.4  # 从1.2微调为1.15,适配下移的轴线
                 )
-                
+
                 plt.tight_layout(rect=[0.05, 0.2, 0.95, 0.9])
                 plt.savefig(
-                    f"{model_name}_Clinical-shap_force_plot.png", 
-                    dpi=300, 
+                    f"{model_name}_Clinical-shap_force_plot.png",
+                    dpi=300,
                     bbox_inches='tight',
                     pad_inches=0.8
                 )
                 plt.show()
-                
+
                 # ==============================================
                 # 图6：SHAP Summary Scatter Plot
                 # ==============================================
@@ -1394,32 +1414,32 @@ def main(csv_path: str, label_col: str):
                 plt.tight_layout()
                 plt.savefig(f"{model_name}_Clinical_shap_summary_scatter_plot.png", dpi=300, bbox_inches='tight')
                 plt.show()
-                
+
                 # ---------------------- 结果保存 ----------------------
                 shap_imp = pd.DataFrame({"feature": feature_cols, "shap_abs_mean": np.abs(shap_values.values).mean(axis=0)}).sort_values(by="shap_abs_mean", ascending=False)
                 shap_imp.to_csv(f"{model_name}_Clinical_shap_feature_importance.csv", index=False, encoding="utf-8-sig")
-                
+
                 force_plot_html = shap.force_plot(explainer.expected_value, shap_values[sample_idx].values, X_test_scaled.iloc[sample_idx], show=False)
                 shap.save_html(f"{model_name}_Clinical_shap_force_plot.html", force_plot_html)
-                
+
                 print(f"\n所有结果已保存：")
                 print(f"1. 特征重要性图：{model_name}_shap_bar_plot.png")
                 print(f"2. TOP5特征散点图：{model_name}_shap_scatter_TOP*.png")
                 print(f"3. 单样本力图：{model_name}_shap_force_plot.png / .html")
                 print(f"6. SHAP汇总散点图：{model_name}_shap_summary_scatter_plot.png")
                 print(f"8. 特征重要性CSV：{model_name}_shap_feature_importance.csv")
-        
+
             # ========== 内层try对应的except：捕获单个模型的SHAP异常 ==========
             except Exception as shap_e:
                 print(f"❌ 处理{model_name} SHAP时出错: {shap_e}")
                 continue  # 跳过当前模型，继续处理下一个
-       #     continue  # 跳过当前模型，继续处理下一个 
-        
+       #     continue  # 跳过当前模型，继续处理下一个
+
         # 17. 生成性能汇总报告
         # 17. 生成性能汇总报告
         print("="*50)
         print("Generating model performance summary report...")
-        
+
         summary_data = []
         for p in performance_list:
             summary_row = {
@@ -1450,7 +1470,7 @@ def main(csv_path: str, label_col: str):
                 'Test_NPV': p['Test_NPV']
             }
             summary_data.append(summary_row)
-        
+
         # 添加集成模型（同时包含CV和Test指标）
         ensemble_row = {
             'Model Name': 'Ensemble',
@@ -1480,41 +1500,42 @@ def main(csv_path: str, label_col: str):
             'Test_NPV': ensemble_metrics.get('NPV', 0.0)
         }
         summary_data.append(ensemble_row)
-        
+
         # 创建并保存汇总数据
         performance_df = pd.DataFrame(summary_data)
         print("\nModel Performance Summary (CV Mean + Test Set):")
         print(performance_df.round(4))
-        
+
         # 保存为CSV文件
         performance_df.to_csv(f'FREET_MultiP13_model_performance_summary_{task_type}.csv', index=False, encoding='utf-8-sig')
         print(f"\nPerformance summary saved to: FREET_MultiP13_model_performance_summary_{task_type}.csv")
 
-        # 保存测试集预测结果
-        print("\nSaving test set ID + prediction results...")
+        # 保存测试集预测结果（使用5折交叉验证中每折模型对测试集预测的平均值）
+        print("\nSaving test set ID + prediction results (5-fold averaged predictions)...")
         id_test_vals = id_test.values if hasattr(id_test, 'values') else id_test
         y_test_vals = y_test if hasattr(y_test, 'values') else y_test
-        
+
         pred_result_df = pd.DataFrame({
             ID_COLUMN: id_test_vals,
             'True_Label': label_encoder.inverse_transform(y_test_vals)
         })
-        
-        for model_name, model in trained_models.items():
-            y_pred = model.predict(X_test_scaled)
-            y_pred_proba = model.predict_proba(X_test_scaled)
-            pred_result_df[f'{model_name}_Pred_Label'] = label_encoder.inverse_transform(y_pred)
+
+        for p in performance_list:
+            model_name = p['Model Name']
+            avg_pred = p['Test_Avg_Pred']
+            avg_pred_proba = p['Test_Avg_Pred_Proba']
+            pred_result_df[f'{model_name}_Pred_Label'] = label_encoder.inverse_transform(avg_pred)
             if task_type == 'binary':
-                pred_result_df[f'{model_name}_Pred_Prob'] = y_pred_proba[:, 1]
+                pred_result_df[f'{model_name}_Pred_Prob'] = avg_pred_proba[:, 1]
             else:
-                pred_result_df[f'{model_name}_Pred_Prob'] = np.max(y_pred_proba, axis=1)
-        
+                pred_result_df[f'{model_name}_Pred_Prob'] = np.max(avg_pred_proba, axis=1)
+
         pred_result_df['Ensemble_Pred_Label'] = label_encoder.inverse_transform(ensemble_y_pred)
         if task_type == 'binary':
             pred_result_df['Ensemble_Pred_Prob'] = ensemble_y_proba[:, 1]
         else:
             pred_result_df['Ensemble_Pred_Prob'] = np.max(ensemble_y_proba, axis=1)
-        
+
         pred_result_df.to_csv(f'FREET_test_set_id_predictions_{task_type}.csv', index=False, encoding='utf-8-sig')
         print(f"Test set ID + predictions saved to: FREET_MultiP13_test_set_id_predictions_{task_type}.csv")
 
@@ -1523,7 +1544,7 @@ def main(csv_path: str, label_col: str):
         print(f"\nKey output files:")
         print(f"  1. Performance summary: FREET_MultiP13_model_performance_summary_{task_type}.csv")
         print(f"  2. Test set ID + predictions: FREET_MultiP13_test_set_id_predictions_{task_type}.csv")
-        
+
     except Exception as e:
         print(f"Program error: {e}")
         raise
@@ -1533,6 +1554,6 @@ if __name__ == "__main__":
     # 替换为你的数据集路径和标签列
     CSV_FILE_PATH = "/data/ruth/rrl2/dataset/FREET_MultiP13.csv"
     LABEL_COLUMN = "OP"
-    
+
     # 运行主函数
     main(CSV_FILE_PATH, LABEL_COLUMN)
