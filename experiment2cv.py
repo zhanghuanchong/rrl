@@ -95,7 +95,7 @@ def get_cv_data_loader(dataset, world_size, rank, batch_size, k=0,
     """在整个数据集上进行第 k 折交叉验证的数据加载。"""
     db_enc, X, y, y_labels = _load_and_encode(dataset)
 
-    skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=random_state)
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
     train_idx, val_idx = list(skf.split(X, y_labels))[k]
 
     X_train, y_train = X[train_idx], y[train_idx]
@@ -422,18 +422,18 @@ def _apply_params_to_args(args, params):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 第一阶段：10折交叉验证网格搜索
+# 第一阶段：5折交叉验证网格搜索
 # ════════════════════════════════════════════════════════════════════════════
 
 def grid_search_cv(args, grid=None):
-    """在整个数据集上进行 10折交叉验证网格搜索。
+    """在整个数据集上进行 5折交叉验证网格搜索。
 
     返回
     ------
-    best_params     : 最优超参数字典
-    best_cv_score   : 最优交叉验证 F1 均值
-    best_model_path : 最优模型路径
-    all_results     : 所有参数组合的结果列表
+    best_params          : 最优超参数字典
+    best_cv_score        : 最优交叉验证 F1 均值
+    best_model_paths     : 最优组合的所有折模型路径列表（用于集成预测）
+    all_results          : 所有参数组合的结果列表
     """
     if grid is None:
         grid = param_grid
@@ -446,7 +446,7 @@ def grid_search_cv(args, grid=None):
     all_results = []
     best_cv_score = -1.0
     best_params = None
-    best_model_path = None
+    best_model_paths = None
 
     for combo_idx, params in enumerate(param_combos):
         logging.info('\n' + '=' * 80)
@@ -469,9 +469,9 @@ def grid_search_cv(args, grid=None):
         fold_results = []  # 每折的完整指标
         fold_model_paths = []
 
-        for k in range(2):
+        for k in range(5):
             logging.info('\n' + '─' * 60)
-            logging.info('  组合 {}, 第 {}/2 折'.format(combo_idx + 1, k + 1))
+            logging.info('  组合 {}, 第 {}/5 折'.format(combo_idx + 1, k + 1))
             logging.info('─' * 60)
 
             fold_folder = os.path.join(combo_folder, 'fold_{}'.format(k))
@@ -493,7 +493,7 @@ def grid_search_cv(args, grid=None):
                              log_file=args_copy.test_res, distributed=False)
 
             db_enc, X, y, y_labels = _load_and_encode(args_copy.data_set)
-            skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
+            skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
             _, val_idx = list(skf.split(X, y_labels))[k]
 
             val_set = TensorDataset(torch.tensor(X[val_idx].astype(np.float32)),
@@ -511,7 +511,7 @@ def grid_search_cv(args, grid=None):
             fold_results.append(fold_metric)
             fold_model_paths.append(args_copy.model)
 
-        # 汇总 10 折结果
+        # 汇总 5 折结果
         metric_names = ['Accuracy', 'F1', 'AUC', 'Precision', 'Recall',
                         'Sensitivity', 'Specificity', 'PPV', 'NPV']
         cv_summary = {}
@@ -524,7 +524,7 @@ def grid_search_cv(args, grid=None):
                 cv_summary[m + '_mean'] = None
                 cv_summary[m + '_std'] = None
 
-        logging.info('\n  组合 {} — 2折 CV 汇总 (均值±标准差):'.format(combo_idx + 1))
+        logging.info('\n  组合 {} — 5折 CV 汇总 (均值±标准差):'.format(combo_idx + 1))
         for m in metric_names:
             mean_val = cv_summary[m + '_mean']
             std_val = cv_summary[m + '_std']
@@ -533,17 +533,13 @@ def grid_search_cv(args, grid=None):
 
         cv_f1_mean = cv_summary.get('F1_mean', 0.0) or 0.0
 
-        # 选当前组合中 F1 最高的折作为该组合的代表模型
-        f1_scores = [fr['F1'] for fr in fold_results]
-        best_fold_idx = int(np.argmax(f1_scores))
-
         combo_result = {
             'combo_idx': combo_idx,
             'params': params,
             'cv_summary': cv_summary,
             'cv_f1_mean': cv_f1_mean,
             'fold_results': fold_results,
-            'best_fold_model': fold_model_paths[best_fold_idx],
+            'fold_model_paths': fold_model_paths,
         }
         all_results.append(combo_result)
 
@@ -551,7 +547,7 @@ def grid_search_cv(args, grid=None):
         if cv_f1_mean > best_cv_score:
             best_cv_score = cv_f1_mean
             best_params = params
-            best_model_path = fold_model_paths[best_fold_idx]
+            best_model_paths = list(fold_model_paths)
 
         logging.info('  当前最优 CV F1 均值: {:.4f}'.format(best_cv_score))
 
@@ -562,38 +558,49 @@ def grid_search_cv(args, grid=None):
     logging.info('网格搜索完成!')
     logging.info('最优超参数: {}'.format(best_params))
     logging.info('最优交叉验证 F1 均值: {:.4f}'.format(best_cv_score))
-    logging.info('最优模型路径: {}'.format(best_model_path))
+    logging.info('最优模型路径 (5折集成): {}'.format(best_model_paths))
     logging.info('=' * 80)
 
-    return best_params, best_cv_score, best_model_path, all_results
+    return best_params, best_cv_score, best_model_paths, all_results
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # 第二阶段：在新的测试集上进行最终评估
 # ════════════════════════════════════════════════════════════════════════════
 
-def evaluate_on_test_set(args, model_path, test_dataset):
-    """在提前准备的新 data 文件（测试集）上评估最优模型。
+def evaluate_on_test_set(args, model_paths, test_dataset):
+    """在提前准备的新 data 文件（测试集）上使用 5 折模型集成评估。
+
+    对每个折的模型分别进行前向推理，将所有模型的原始输出取平均后再计算指标。
 
     参数
     ----
     args         : 命令行参数
-    model_path   : 最优模型检查点路径
+    model_paths  : 最优组合的所有折模型检查点路径列表
     test_dataset : 测试集名称（对应 dataset/ 下的 .data 和 .info 文件）
 
     返回
     ------
     results : 完整指标字典
     """
-    rrl = load_model(model_path, args.device_ids[0], log_file=args.test_res, distributed=False)
-
     # 使用训练数据的编码器
     db_enc, _, _, _ = _load_and_encode(args.data_set)
     test_loader = get_test_data_loader(test_dataset, db_enc, args.batch_size)
 
-    # 在测试集上预测
-    y_true_oh, y_pred_raw, y_true_label, y_pred_label = _predict(
-        rrl, test_loader, args.device_ids[0])
+    # 对每个折模型进行推理，收集原始输出
+    all_y_pred_raw = []
+    y_true_oh = None
+    for mp in model_paths:
+        rrl = load_model(mp, args.device_ids[0], log_file=args.test_res, distributed=False)
+        y_true_oh_i, y_pred_raw_i, _, _ = _predict(rrl, test_loader, args.device_ids[0])
+        all_y_pred_raw.append(y_pred_raw_i)
+        if y_true_oh is None:
+            y_true_oh = y_true_oh_i
+
+    # 对所有折模型的原始输出取平均
+    y_pred_raw = np.mean(all_y_pred_raw, axis=0)
+    y_true_label = np.argmax(y_true_oh, axis=1)
+    y_pred_label = np.argmax(y_pred_raw, axis=1)
 
     results = compute_full_metrics(y_true_oh, y_pred_raw, y_true_label, y_pred_label)
 
@@ -622,7 +629,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='RRL 2-Fold CV Grid Search + Test Set Evaluation',
+        description='RRL 5-Fold CV Grid Search + Ensemble Test Set Evaluation',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-d', '--data_set', type=str, default='tic-tac-toe',
                         help='训练数据集名称（dataset/ 目录下的文件前缀）')
@@ -688,17 +695,17 @@ if __name__ == '__main__':
                         format='%(asctime)s - [%(levelname)s] - %(message)s')
 
     # ──────────────────────────────────────────────────────────────────────
-    # 第一阶段：10折交叉验证网格搜索
+    # 第一阶段：5折交叉验证网格搜索
     # ──────────────────────────────────────────────────────────────────────
     print('=' * 80)
-    print('第一阶段: 10折交叉验证网格搜索 (random_state=42)')
+    print('第一阶段: 5折交叉验证网格搜索 (random_state=42)')
     print('=' * 80)
 
     best_params, best_cv_score, best_model_path, all_results = grid_search_cv(exp_args)
 
     print('\n最优超参数: {}'.format(best_params))
     print('交叉验证最佳 F1 均值: {:.4f}'.format(best_cv_score))
-    print('最优模型路径: {}'.format(best_model_path))
+    print('最优模型路径 (5折集成): {}'.format(best_model_path))
 
     # 保存 CV 汇总结果到 CSV
     cv_csv_path = os.path.join(exp_args.folder_path, 'grid_search_cv_results.csv')
