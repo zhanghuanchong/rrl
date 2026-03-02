@@ -34,7 +34,7 @@ class DBEncoder:
         self.discrete = discrete
         self.y_one_hot = y_one_hot
         self.label_enc = preprocessing.OneHotEncoder(categories='auto') if y_one_hot else preprocessing.LabelEncoder()
-        self.feature_enc = preprocessing.OneHotEncoder(categories='auto', drop=drop)
+        self.feature_enc = preprocessing.OneHotEncoder(categories='auto', drop=drop, handle_unknown='ignore')
         self.imp = SimpleImputer(missing_values=np.nan, strategy='mean')
         self.X_fname = None
         self.y_fname = None
