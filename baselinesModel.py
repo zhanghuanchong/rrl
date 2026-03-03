@@ -388,6 +388,104 @@ def data_preprocessing_opt(df: pd.DataFrame, label_col: str) -> Tuple[pd.DataFra
 
     return X_processed, y_processed, feature_names, num_features, id_series, le
 
+# ---------------------- 测试集数据预处理（使用训练集的参数） ----------------------
+def data_preprocessing_test(df_test: pd.DataFrame, label_col: str,
+                            train_num_features: List[str], train_cat_features: List[str],
+                            train_le: LabelEncoder,
+                            train_scaler: StandardScaler = None) -> Tuple[pd.DataFrame, np.ndarray, pd.Series]:
+    """对外部测试集进行预处理，复用训练集的特征列信息和LabelEncoder。
+
+    Args:
+        df_test: 测试集DataFrame
+        label_col: 标签列名
+        train_num_features: 训练集的数值特征列名列表
+        train_cat_features: 训练集的分类特征列名列表
+        train_le: 训练集的LabelEncoder（用于编码标签）
+        train_scaler: 训练集的StandardScaler（如不需要此处标准化可传None）
+
+    Returns:
+        X_processed, y_processed, id_series
+    """
+    print("="*50)
+    print("Starting TEST data preprocessing (using training set parameters)...")
+
+    if ID_COLUMN not in df_test.columns:
+        raise ValueError(f"ID column '{ID_COLUMN}' not found in test dataset!")
+    id_series = df_test[ID_COLUMN].copy()
+
+    if label_col not in df_test.columns:
+        raise ValueError(f"Label column {label_col} not found in test dataset!")
+
+    X = df_test.drop(columns=[label_col, ID_COLUMN])
+    y = df_test[label_col].copy()
+    print(f"Raw test data shape: Features {X.shape}, Labels {y.shape}, ID count {len(id_series)}")
+
+    # 使用训练集的LabelEncoder转换标签（处理未知标签）
+    known_classes = set(train_le.classes_)
+    unknown_mask = ~y.isin(known_classes)
+    if unknown_mask.any():
+        print(f"Warning: Found {unknown_mask.sum()} samples with unknown labels in test set, these will be dropped!")
+        X = X[~unknown_mask]
+        y = y[~unknown_mask]
+        id_series = id_series[~unknown_mask]
+    y_processed = train_le.transform(y)
+    print(f"Test label classes (using train encoder): {train_le.classes_}, Encoded labels: {np.unique(y_processed)}")
+
+    # 处理数值特征
+    num_features_in_test = [f for f in train_num_features if f in X.columns]
+    cat_features_in_test = [f for f in train_cat_features if f in X.columns]
+
+    if num_features_in_test:
+        knn_imputer = KNNImputer(n_neighbors=5, weights='distance')
+        X_num_imputed = knn_imputer.fit_transform(X[num_features_in_test])
+        X_num_imputed = pd.DataFrame(X_num_imputed, columns=num_features_in_test, index=X.index)
+
+        # 异常值处理
+        for col in num_features_in_test:
+            mean = X_num_imputed[col].mean()
+            std = X_num_imputed[col].std()
+            upper_limit = mean + 3 * std
+            lower_limit = mean - 3 * std
+            X_num_imputed[col] = np.where(
+                X_num_imputed[col] > upper_limit, upper_limit,
+                np.where(X_num_imputed[col] < lower_limit, lower_limit, X_num_imputed[col])
+            )
+    else:
+        X_num_imputed = pd.DataFrame(index=X.index)
+
+    # 处理分类特征
+    if cat_features_in_test:
+        cat_imputer = SimpleImputer(strategy='most_frequent', fill_value='Unknown')
+        X_cat_imputed = cat_imputer.fit_transform(X[cat_features_in_test])
+        X_cat_imputed = pd.DataFrame(X_cat_imputed, columns=cat_features_in_test, index=X.index)
+
+        for col in cat_features_in_test:
+            le_cat = LabelEncoder()
+            X_cat_imputed[col] = le_cat.fit_transform(X_cat_imputed[col].astype(str))
+    else:
+        X_cat_imputed = pd.DataFrame(index=X.index)
+
+    # 合并特征（按照训练集的特征顺序）
+    all_train_features = train_num_features + train_cat_features
+    X_processed = pd.concat([X_num_imputed, X_cat_imputed], axis=1)
+
+    # 确保特征列顺序与训练集一致，缺失的列填0
+    for col in all_train_features:
+        if col not in X_processed.columns:
+            X_processed[col] = 0
+            print(f"Warning: Feature '{col}' not in test set, filled with 0")
+    X_processed = X_processed[all_train_features]
+
+    # 最终数据验证
+    X_processed = X_processed.dropna()
+    y_processed = y_processed[X_processed.index] if hasattr(y_processed, '__getitem__') else y_processed
+    id_series = id_series[X_processed.index]
+    print(f"Processed test data shape: Features {X_processed.shape}, Labels {len(y_processed)}, ID count {len(id_series)}")
+    print("Test data preprocessing completed!")
+    print("="*50)
+
+    return X_processed, y_processed, id_series
+
 # ---------------------- 数值特征直方图 ----------------------
 def plot_numeric_feature_histogram(X: pd.DataFrame, num_features: List[str], task_type: str):
     """绘制数值特征直方图"""
@@ -1128,19 +1226,28 @@ def visualize_basic_results(performance_list, ensemble_results, task_type, label
     print("="*50)
 
 # ---------------------- 主函数 ----------------------
-def main(csv_path: str, label_col: str):
-    """主函数"""
+def main(csv_path: str, label_col: str, test_csv_path: str = None):
+    """主函数
+
+    Args:
+        csv_path: 训练集CSV文件路径
+        label_col: 标签列名
+        test_csv_path: 外部测试集CSV文件路径（如果为None，则从训练集中拆分测试集）
+    """
     try:
-        # 1. 加载数据
+        # 1. 加载训练数据
         print("="*50)
-        print("Loading CSV dataset...")
+        print("Loading TRAINING CSV dataset...")
         df = pd.read_csv(csv_path, encoding='utf-8')
-        print(f"CSV file loaded successfully! Data shape: {df.shape}")
+        print(f"Training CSV file loaded successfully! Data shape: {df.shape}")
         print(f"ID column '{ID_COLUMN}' exists: {ID_COLUMN in df.columns}")
         print("="*50)
 
-        # 2. 数据预处理
+        # 2. 训练集数据预处理
         X_processed, y_processed, feature_names, num_features, id_series, label_encoder = data_preprocessing_opt(df, label_col)
+
+        # 获取分类特征列名（用于测试集预处理）
+        cat_features = [f for f in feature_names if f not in num_features]
 
         # 3. 自动判断任务类型
         task_type = auto_judge_task_type(y_processed)
@@ -1151,18 +1258,47 @@ def main(csv_path: str, label_col: str):
         final_feature_names = feature_names.copy()
         id_eng = id_series.copy()
 
-        # 5. 数据拆分
-        X_train, X_test, y_train, y_test, id_train, id_test = train_test_split(
-            X_eng, y_processed, id_eng,
-            test_size=TEST_SIZE, stratify=y_processed, random_state=RANDOM_SEED
-        )
+        # 5. 数据准备：训练集 + 测试集
+        if test_csv_path is not None:
+            # ========== 使用外部测试集 ==========
+            print("="*50)
+            print(f"Loading EXTERNAL TEST CSV dataset: {test_csv_path}")
+            df_test = pd.read_csv(test_csv_path, encoding='utf-8')
+            print(f"Test CSV file loaded successfully! Data shape: {df_test.shape}")
+            print("="*50)
 
-        y_train = y_train.values.ravel() if hasattr(y_train, 'values') else np.ravel(y_train)
-        y_test = y_test.values.ravel() if hasattr(y_test, 'values') else np.ravel(y_test)
+            # 使用训练集参数预处理测试集
+            X_test, y_test, id_test = data_preprocessing_test(
+                df_test, label_col,
+                train_num_features=num_features,
+                train_cat_features=cat_features,
+                train_le=label_encoder
+            )
 
-        print(f"Data split completed:")
-        print(f"  Train set: Features {X_train.shape}, Labels {y_train.shape}, ID {len(id_train)}")
-        print(f"  Test set: Features {X_test.shape}, Labels {y_test.shape}, ID {len(id_test)}")
+            # 训练集 = 全部训练数据
+            X_train = X_eng.copy()
+            y_train = y_processed.copy()
+            id_train = id_eng.copy()
+
+            y_train = y_train.values.ravel() if hasattr(y_train, 'values') else np.ravel(y_train)
+            y_test = y_test.values.ravel() if hasattr(y_test, 'values') else np.ravel(y_test)
+
+            print(f"Data preparation completed (external test set):")
+            print(f"  Train set: Features {X_train.shape}, Labels {y_train.shape}, ID {len(id_train)}")
+            print(f"  Test set:  Features {X_test.shape}, Labels {y_test.shape}, ID {len(id_test)}")
+        else:
+            # ========== 从训练集中拆分测试集（原有逻辑） ==========
+            X_train, X_test, y_train, y_test, id_train, id_test = train_test_split(
+                X_eng, y_processed, id_eng,
+                test_size=TEST_SIZE, stratify=y_processed, random_state=RANDOM_SEED
+            )
+
+            y_train = y_train.values.ravel() if hasattr(y_train, 'values') else np.ravel(y_train)
+            y_test = y_test.values.ravel() if hasattr(y_test, 'values') else np.ravel(y_test)
+
+            print(f"Data split completed (internal test set):")
+            print(f"  Train set: Features {X_train.shape}, Labels {y_train.shape}, ID {len(id_train)}")
+            print(f"  Test set:  Features {X_test.shape}, Labels {y_test.shape}, ID {len(id_test)}")
 
         # 6. 标准化
         scaler = StandardScaler()
@@ -1552,8 +1688,9 @@ def main(csv_path: str, label_col: str):
 # ---------------------- 运行主函数 ----------------------
 if __name__ == "__main__":
     # 替换为你的数据集路径和标签列
-    CSV_FILE_PATH = "/data/ruth/rrl2/dataset/FREET_MultiP13.csv"
+    CSV_FILE_PATH = "/data/ruth/rrl2/dataset/FREET_MultiP13.csv"       # 训练集
+    TEST_CSV_FILE_PATH = "/data/ruth/rrl2/dataset/FREET_MultiP13test.csv"  # 外部测试集（设为None则从训练集拆分）
     LABEL_COLUMN = "OP"
 
     # 运行主函数
-    main(CSV_FILE_PATH, LABEL_COLUMN)
+    main(CSV_FILE_PATH, LABEL_COLUMN, test_csv_path=TEST_CSV_FILE_PATH)
