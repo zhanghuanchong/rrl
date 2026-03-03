@@ -30,15 +30,20 @@ run_test_only.py
 import os
 import csv
 import glob
+import copy
+import shutil
 import logging
 import argparse
 import numpy as np
+import torch
+from torch.utils.data import DataLoader, TensorDataset
 
 from experiment2cv import (
     _load_and_encode,
     load_model,
     get_test_data_loader,
     _predict,
+    _print_rules,
     compute_full_metrics,
 )
 
@@ -100,9 +105,10 @@ def evaluate_on_test_set_standalone(args, model_paths, test_dataset):
     """独立版本的测试集评估，包含 handle_unknown 修复。
 
     与 experiment2cv.evaluate_on_test_set 类似，但增加了对未知类别的处理。
+    同时保存 model.pth、log.txt、rrl.txt、test_res.txt 到输出目录。
     """
     # 使用训练数据的编码器
-    db_enc, _, _, _ = _load_and_encode(args.data_set)
+    db_enc, X_all, y_all, y_labels_all = _load_and_encode(args.data_set)
 
     # ═══ 关键修复：处理测试集中出现训练集未见过的类别 ═══
     if hasattr(db_enc, 'feature_enc') and db_enc.feature_enc is not None:
@@ -116,16 +122,48 @@ def evaluate_on_test_set_standalone(args, model_paths, test_dataset):
 
     test_loader = get_test_data_loader(test_dataset, db_enc, args.batch_size)
 
+    # 构建训练集 DataLoader（用于规则打印时检测死节点）
+    train_set_for_rules = TensorDataset(
+        torch.tensor(X_all.astype(np.float32)),
+        torch.tensor(y_all.astype(np.float32)))
+    train_loader_for_rules = DataLoader(
+        train_set_for_rules, batch_size=args.batch_size, shuffle=False)
+
+    # test_res.txt 路径
+    test_res_path = os.path.join(args.output_dir, 'test_res.txt')
+
     # 对每个折模型进行推理，收集原始输出
     all_y_pred_raw = []
     y_true_oh = None
     for i, mp in enumerate(model_paths):
         logging.info('加载模型 [{}/{}]: {}'.format(i + 1, len(model_paths), mp))
-        rrl = load_model(mp, args.device_ids[0], log_file=None, distributed=False)
+        rrl = load_model(mp, args.device_ids[0], log_file=test_res_path, distributed=False)
         y_true_oh_i, y_pred_raw_i, _, _ = _predict(rrl, test_loader, args.device_ids[0])
         all_y_pred_raw.append(y_pred_raw_i)
         if y_true_oh is None:
             y_true_oh = y_true_oh_i
+
+        # ── 保存 model.pth 副本到输出目录 ──
+        if len(model_paths) == 1:
+            dest_model = os.path.join(args.output_dir, 'model.pth')
+        else:
+            dest_model = os.path.join(args.output_dir, 'model_fold{}.pth'.format(i))
+        shutil.copy2(mp, dest_model)
+        logging.info('模型已复制至: {}'.format(dest_model))
+
+        # ── 保存 rrl.txt 规则文件 ──
+        if len(model_paths) == 1:
+            rrl_file_path = os.path.join(args.output_dir, 'rrl.txt')
+        else:
+            rrl_file_path = os.path.join(args.output_dir, 'rrl_fold{}.txt'.format(i))
+        args_for_rules = argparse.Namespace(
+            print_rule=True,
+            rrl_file=rrl_file_path,
+        )
+        _print_rules(rrl, db_enc, train_loader_for_rules, args_for_rules)
+        logging.info('规则已保存至: {}'.format(rrl_file_path))
+
+    logging.info('test_res 已保存至: {}'.format(test_res_path))
 
     # 对所有折模型的原始输出取平均
     y_pred_raw = np.mean(all_y_pred_raw, axis=0)
@@ -200,6 +238,14 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
+    # ── 添加文件日志 handler，将日志同时写入 log.txt ──
+    log_file_path = os.path.join(args.output_dir, 'log.txt')
+    file_handler = logging.FileHandler(log_file_path, mode='w', encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - [%(levelname)s] - %(message)s'))
+    logging.getLogger().addHandler(file_handler)
+    logging.info('日志将同时保存至: {}'.format(log_file_path))
+
     # 为 evaluate 函数需要的属性补充默认值
     args.test_res = os.path.join(args.output_dir, 'test_res.txt')
 
@@ -236,6 +282,17 @@ def main():
         writer.writeheader()
         writer.writerow(test_results)
     print('\n测试结果已保存至: {}'.format(test_csv_path))
+    print('\n输出文件汇总:')
+    print('  日志文件:       {}'.format(log_file_path))
+    print('  测试结果 CSV:   {}'.format(test_csv_path))
+    print('  test_res.txt:   {}'.format(os.path.join(args.output_dir, 'test_res.txt')))
+    for i in range(len(model_paths)):
+        if len(model_paths) == 1:
+            print('  model.pth:      {}'.format(os.path.join(args.output_dir, 'model.pth')))
+            print('  rrl.txt:        {}'.format(os.path.join(args.output_dir, 'rrl.txt')))
+        else:
+            print('  model_fold{}.pth: {}'.format(i, os.path.join(args.output_dir, 'model_fold{}.pth'.format(i))))
+            print('  rrl_fold{}.txt:   {}'.format(i, os.path.join(args.output_dir, 'rrl_fold{}.txt'.format(i))))
     print('=' * 80)
 if __name__ == '__main__':
     main()
